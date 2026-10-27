@@ -13,12 +13,12 @@ export default function TabLayout() {
       indicatorColor={colors.backgroundElement}
       labelStyle={{ selected: { color: colors.text } }}>
       <NativeTabs.Trigger name="index">
-        <NativeTabs.Trigger.Label>Страны</NativeTabs.Trigger.Label>
+        <NativeTabs.Trigger.Label>Исследовать</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon sf="globe" md="public" />
       </NativeTabs.Trigger>
 
       <NativeTabs.Trigger name="map">
-        <NativeTabs.Trigger.Label>Карта</NativeTabs.Trigger.Label>
+        <NativeTabs.Trigger.Label>Моя карта</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon sf="map" md="map" />
       </NativeTabs.Trigger>
 

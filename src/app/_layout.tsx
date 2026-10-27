@@ -10,6 +10,7 @@ export default function RootLayout() {
       <AppStoreProvider>
         <Stack screenOptions={{ headerBackTitle: 'Назад' }}>
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          <Stack.Screen name="demo" options={{ headerShown: false }} />
           <Stack.Screen name="country/[code]" options={{ title: '' }} />
           <Stack.Screen
             name="trip/new"

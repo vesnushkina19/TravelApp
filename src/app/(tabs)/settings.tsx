@@ -1,3 +1,4 @@
+import { router } from 'expo-router';
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text } from 'react-native';
 
@@ -28,6 +29,15 @@ export default function SettingsScreen() {
         <ThemedText type="small">Посещено стран: {visited.length}</ThemedText>
         <ThemedText type="small">Запланировано поездок: {trips.length}</ThemedText>
       </ThemedView>
+
+      <Pressable onPress={() => router.push('/demo')}>
+        <ThemedView type="backgroundElement" style={styles.card}>
+          <ThemedText>🎨 Дизайн-прототипы Solar</ThemedText>
+          <ThemedText type="small" themeColor="textSecondary">
+            Подбор путешествия, совместная поездка, расходы компании
+          </ThemedText>
+        </ThemedView>
+      </Pressable>
 
       <Pressable
         onPress={() => {
