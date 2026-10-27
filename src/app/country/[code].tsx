@@ -83,7 +83,7 @@ export default function CountryScreen() {
         </Pressable>
 
         <Link href={{ pathname: '/trip/new', params: { country: country.code } }} asChild>
-          <Pressable style={[styles.button, { backgroundColor: theme.text }]}>
+          <Pressable style={StyleSheet.flatten([styles.button, { backgroundColor: theme.text }])}>
             <Text style={[styles.buttonText, { color: theme.background }]}>
               Запланировать поездку
             </Text>

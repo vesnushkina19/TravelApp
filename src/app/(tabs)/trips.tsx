@@ -26,7 +26,7 @@ export default function TripsScreen() {
     <Screen title="Поездки">
       {/* TODO: календарь-вид месяца с отмеченными поездками */}
       <Link href="/trip/new" asChild>
-        <Pressable style={[styles.addButton, { backgroundColor: theme.text }]}>
+        <Pressable style={StyleSheet.flatten([styles.addButton, { backgroundColor: theme.text }])}>
           <Text style={[styles.addButtonText, { color: theme.background }]}>+ Новая поездка</Text>
         </Pressable>
       </Link>

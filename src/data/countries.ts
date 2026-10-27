@@ -17,7 +17,7 @@ export type VisaInfo = {
   /** Сколько дней можно находиться без визы / по визе по прилёту. */
   stayDays?: number;
   note?: string;
-  sourceUrl?: string;
+  sourceUrl?: `https://${string}`;
   /** Дата последней проверки в формате YYYY-MM-DD. null — не проверено. */
   verifiedAt: string | null;
 };
