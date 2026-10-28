@@ -3,68 +3,14 @@
  * и «Расходы компании». Суммы и курс условные.
  */
 
-export type Role = 'organizer' | 'member';
+import type { Participant, Stop, TripDay } from '@/domain/travel';
+import type { Expense } from '@/domain/financial';
 
-export type Participant = {
-  id: string;
-  name: string;
-  role: Role;
-  isMe?: boolean;
-};
-
-export type StopKind = 'sight' | 'food' | 'transport' | 'stay' | 'walk' | 'nature';
-
-export const StopKindIcons: Record<StopKind, string> = {
-  sight: '🏛️',
-  food: '🍽️',
-  transport: '🚐',
-  stay: '🏨',
-  walk: '🚶',
-  nature: '⛰️',
-};
-
-export type Stop = {
-  id: string;
-  time: string;
-  title: string;
-  kind: StopKind;
-  /** Предполагаемая длительность, свободный текст. */
-  duration: string;
-  note?: string;
-};
-
-export type TripDay = {
-  date: string;
-  stops: Stop[];
-};
-
-export type ExpenseCategory = 'food' | 'transport' | 'stay' | 'fun' | 'shopping' | 'other';
-
-export const ExpenseCategories: Record<ExpenseCategory, { label: string; icon: string }> = {
-  food: { label: 'Еда', icon: '🍽️' },
-  transport: { label: 'Транспорт', icon: '🚕' },
-  stay: { label: 'Проживание', icon: '🏨' },
-  fun: { label: 'Развлечения', icon: '🎟️' },
-  shopping: { label: 'Покупки', icon: '🛍️' },
-  other: { label: 'Другое', icon: '📦' },
-};
-
-export type Expense = {
-  id: string;
-  title: string;
-  category: ExpenseCategory;
-  /** Исходная сумма в местной валюте. */
-  amount: number;
-  currency: 'GEL';
-  /** Курс ₽ за 1 GEL на момент операции — сохраняется вместе с расходом. */
-  rateRub: number;
-  paidBy: string;
-  splitBetween: string[];
-  /** Ручное разделение: id участника → доля в GEL. Нет — поровну. */
-  manualShares?: Record<string, number>;
-  /** YYYY-MM-DD */
-  date: string;
-};
+export type { Participant, Role, StopKind, Stop, TripDay } from '@/domain/travel';
+export { StopKindIcons } from '@/domain/travel';
+export type { Expense, ExpenseCategory } from '@/domain/financial';
+export { ExpenseCategories } from '@/domain/financial';
+export { formatDay } from '@/utils/trip-dates';
 
 /** Условный курс для прототипа. НЕ актуальный. */
 export const DEMO_RATE_RUB_PER_GEL = 32.5;
@@ -135,13 +81,3 @@ export const DemoExpenses: Expense[] = [
   { id: 'e5', title: 'Трансфер в Мцхету', category: 'transport', amount: 120, currency: 'GEL', rateRub: DEMO_RATE_RUB_PER_GEL, paidBy: 'misha', splitBetween: all, date: '2027-05-05' },
   { id: 'e6', title: 'Сувениры и чурчхела', category: 'shopping', amount: 64, currency: 'GEL', rateRub: DEMO_RATE_RUB_PER_GEL, paidBy: 'anya', splitBetween: ['anya'], date: '2027-05-05' },
 ];
-
-const MONTHS_GENITIVE = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
-const WEEKDAYS = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
-
-/** '2027-05-03' → '3 мая' (с днём недели — '3 мая, пн'). */
-export function formatDay(iso: string, withWeekday = false) {
-  const d = new Date(`${iso}T00:00:00`);
-  const base = `${d.getDate()} ${MONTHS_GENITIVE[d.getMonth()]}`;
-  return withWeekday ? `${base}, ${WEEKDAYS[d.getDay()]}` : base;
-}

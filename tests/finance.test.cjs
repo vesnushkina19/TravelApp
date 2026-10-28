@@ -261,7 +261,20 @@ test('ID values resembling object prototype keys remain valid without corrupting
 });
 
 // Exercise actual form callbacks with isolated hooks and inert native/Solar elements.
-function screenHarness() {
+async function screenHarness() {
+  const { createSolarStorage } = load('src/store/solar-storage.ts');
+  const { createAsyncSolarRepository } = load('src/repositories/solar-repository.ts');
+  const { createDemoSolarState } = load('src/data/demo/solar-seed.ts');
+  const { getTripView } = load('src/domain/trip-finance.ts');
+  let raw = null;
+  const storage = createSolarStorage(createAsyncSolarRepository({
+    getItem: async () => raw, setItem: async (_key, value) => { raw = value; },
+  }), createDemoSolarState);
+  await storage.load();
+  const view = () => {
+    const data = storage.getSnapshot().data;
+    return getTripView(data.trips.find((trip) => trip.id === data.activeTripId));
+  };
   const states = new Map();
   let active;
   const react = { useState(initial) {
@@ -277,7 +290,7 @@ function screenHarness() {
   }, useRef(initial) {
     return react.useState(() => ({ current: initial }))[0];
   } };
-  const isolated = loader({ react, 'react-native': { StyleSheet: { create: (s) => s }, ScrollView: 'ScrollView', View: 'View' },
+  const isolated = loader({ react, '@/store/solar-store': { useSolarTrip: () => ({ ...view(), dispatch: storage.dispatch }) }, 'react-native': { StyleSheet: { create: (s) => s }, ScrollView: 'ScrollView', View: 'View' },
     solar: new Proxy({}, { get: (_, name) => name }) });
   const Screen = isolated('src/app/demo/expenses.tsx').default;
   const render = (Component, props = {}, instance = Component) => {
@@ -290,11 +303,11 @@ function screenHarness() {
     if (Array.isArray(tree)) return tree.map((child) => find(child, predicate)).find(Boolean);
     return predicate(tree) ? tree : find(tree.props?.children, predicate);
   };
-  return { Screen, render, find, getLedger: () => states.get(Screen)[0] };
+  return { Screen, render, find, getLedger: () => view().ledger };
 }
 
-test('the existing expense form shows an error and never saves fractional manual shares', () => {
-  const h = screenHarness();
+test('the existing expense form shows an error and never saves fractional manual shares', async () => {
+  const h = await screenHarness();
   let root = h.render(h.Screen);
   h.find(root, (e) => e.props?.title === '+ Добавить расход').props.onPress();
   root = h.render(h.Screen);
@@ -313,8 +326,8 @@ test('the existing expense form shows an error and never saves fractional manual
   assert.ok(h.find(render(), (e) => e.props?.accessibilityRole === 'alert'));
 });
 
-test('the existing rate card preserves a small rate and disables invalid rates', () => {
-  const h = screenHarness();
+test('the existing rate card preserves a small rate and disables invalid rates', async () => {
+  const h = await screenHarness();
   const card = h.find(h.render(h.Screen), (e) => e.type?.name === 'RateCard');
   let applied;
   const props = { ...card.props, onChange: (rate) => { applied = rate; } };
@@ -328,8 +341,8 @@ test('the existing rate card preserves a small rate and disables invalid rates',
   assert.equal(applied.value, 0.004);
 });
 
-test('valid decimal manual shares are saved through the existing form and parent handler', () => {
-  const h = screenHarness();
+test('valid decimal manual shares are saved through the existing form and parent handler', async () => {
+  const h = await screenHarness();
   h.find(h.render(h.Screen), (e) => e.props?.title === '+ Добавить расход').props.onPress();
   const form = h.find(h.render(h.Screen), (e) => e.type?.name === 'ExpenseForm');
   const render = () => h.render(form.type, form.props);
@@ -347,8 +360,8 @@ test('valid decimal manual shares are saved through the existing form and parent
   assert.ok(h.find(root, (e) => e.props?.title === '+ Добавить расход'));
 });
 
-test('a parent financial validation error is shown in the existing form', () => {
-  const h = screenHarness();
+test('a parent financial validation error is shown in the existing form', async () => {
+  const h = await screenHarness();
   h.find(h.render(h.Screen), (e) => e.props?.title === '+ Добавить расход').props.onPress();
   const form = h.find(h.render(h.Screen), (e) => e.type?.name === 'ExpenseForm');
   const props = { ...form.props, onSave: () => { throw new Error('Сумма: превышен безопасный диапазон'); } };
@@ -603,8 +616,8 @@ function controlsFor(h, sender = 'anya') {
   return h.render(element.type, element.props, `${element.props.suggestion.from}->${element.props.suggestion.to}`);
 }
 
-test('UI: full repayment and a rapid repeated click create one operation and update history', () => {
-  const h = screenHarness();
+test('UI: full repayment and a rapid repeated click create one operation and update history', async () => {
+  const h = await screenHarness();
   const button = h.find(controlsFor(h), (e) => e.props?.title === 'Отметить погашенным');
   button.props.onPress();
   button.props.onPress();
@@ -619,8 +632,8 @@ test('UI: full repayment and a rapid repeated click create one operation and upd
   assert.ok(h.find(root, (e) => e.props?.children === '✓ Перевод учтён'));
 });
 
-test('UI: two intentional partial payments of the same amount remain separate; a rapid repeat does not', () => {
-  const h = screenHarness();
+test('UI: two intentional partial payments of the same amount remain separate; a rapid repeat does not', async () => {
+  const h = await screenHarness();
   for (let attempt = 0; attempt < 2; attempt++) {
     h.find(controlsFor(h), (e) => e.props?.title === 'Погасить часть').props.onPress();
     h.find(controlsFor(h), (e) => e.props?.label === 'Сумма погашения').props.onChangeText('40,00');
@@ -637,8 +650,8 @@ test('UI: two intentional partial payments of the same amount remain separate; a
   assert.equal(balancesOf(ledger, demo.DemoParticipants.map((p) => p.id)).anya, -277.67);
 });
 
-test('UI: invalid or excessive partial payments show an error and do not change the ledger', () => {
-  const h = screenHarness();
+test('UI: invalid or excessive partial payments show an error and do not change the ledger', async () => {
+  const h = await screenHarness();
   h.find(controlsFor(h), (e) => e.props?.title === 'Погасить часть').props.onPress();
   for (const value of ['', '0', '-1', '0,015', 'NaN', 'Infinity', '1e2', '1000']) {
     h.find(controlsFor(h), (e) => e.props?.label === 'Сумма погашения').props.onChangeText(value);
@@ -648,8 +661,8 @@ test('UI: invalid or excessive partial payments show an error and do not change 
   }
 });
 
-test('UI: cancellation is replay-safe, retains history and restores the recommendation', () => {
-  const h = screenHarness();
+test('UI: cancellation is replay-safe, retains history and restores the recommendation', async () => {
+  const h = await screenHarness();
   h.find(controlsFor(h), (e) => e.props?.title === 'Отметить погашенным').props.onPress();
   const paid = h.getLedger().settlements[0];
   const cancel = h.find(h.render(h.Screen), (e) => e.props?.title === 'Отменить перевод');
@@ -666,8 +679,8 @@ test('UI: cancellation is replay-safe, retains history and restores the recommen
   assert.equal(h.find(root, (e) => e.type?.name === 'PaymentControls' && e.props.suggestion.from === 'anya').props.suggestion.amount, 357.67);
 });
 
-test('UI: all repayments clear the balances, while recording a new expense retains both payments', () => {
-  const h = screenHarness();
+test('UI: all repayments clear the balances, while recording a new expense retains both payments', async () => {
+  const h = await screenHarness();
   h.find(controlsFor(h, 'anya'), (e) => e.props?.title === 'Отметить погашенным').props.onPress();
   h.find(controlsFor(h, 'misha'), (e) => e.props?.title === 'Отметить погашенным').props.onPress();
   const paid = h.getLedger().settlements;

@@ -43,7 +43,8 @@
     "web": "expo start --web",
     "lint": "expo lint",
     "test:finance": "node --test tests/finance.test.cjs",
-    "test:storage": "node --test tests/storage.test.cjs"
+    "test:storage": "node --test tests/storage.test.cjs",
+    "test:solar": "node --test tests/solar.test.cjs"
   },
   "private": true
 }

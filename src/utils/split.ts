@@ -1,4 +1,4 @@
-import type { Expense } from '@/data/demo/georgia-trip';
+import type { Expense } from '@/domain/financial';
 import { validateParticipantIds as uniqueIds, validateSettlementJournal, type Settlement } from '@/domain/settlement';
 
 import { convertGelToRub, moneyFromCents, moneyToCents, parseRate, sumMoney } from './money';

@@ -16,17 +16,13 @@ import { SolarText } from '@/components/solar/solar-text';
 import { TextField } from '@/components/solar/text-field';
 import { Solar, SolarRadius, SolarSize, SolarSpace } from '@/constants/solar';
 import {
-  DemoExpenses,
-  DemoParticipants,
-  DemoTrip,
-  DemoTripDays,
   StopKindIcons,
-  formatDay,
-  type Participant,
   type Role,
-  type TripDay,
-} from '@/data/demo/georgia-trip';
-import { formatMoney, newId } from '@/utils/money';
+} from '@/domain/travel';
+import type { TripDay, TripParticipant as Participant } from '@/domain/solar-trip';
+import { useSolarTrip } from '@/store/solar-store';
+import { formatDay } from '@/utils/trip-dates';
+import { financialResult, formatMoney, newId } from '@/utils/money';
 
 const TABS = ['Маршрут', 'Карта', 'Участники', 'Расходы', 'Документы'] as const;
 type Tab = (typeof TABS)[number];
@@ -35,24 +31,20 @@ const RoleLabels: Record<Role, string> = { organizer: 'Организатор', 
 
 export default function TripScreen() {
   const [tab, setTab] = useState<Tab>('Маршрут');
-  const [participants, setParticipants] = useState<Participant[]>(DemoParticipants);
-  const [days, setDays] = useState<TripDay[]>(DemoTripDays);
+  const { trip, participants, days, budgetRub, dispatch } = useSolarTrip();
   const [inviteOpen, setInviteOpen] = useState(false);
-
-  const addStop = (date: string) =>
-    setDays((cur) =>
-      cur.map((d) =>
-        d.date === date
-          ? {
-              ...d,
-              stops: [
-                ...d.stops,
-                { id: newId('stop'), time: '—', title: 'Новое место', kind: 'sight', duration: 'время уточнить' },
-              ],
-            }
-          : d,
-      ),
-    );
+  const [error, setError] = useState<string | null>(null);
+  const act = (action: () => void) => {
+    const result = financialResult(action);
+    setError(result.error);
+    return result.error === null;
+  };
+  const addStop = (date: string) => act(() => {
+    const day = days.find((day) => day.date === date);
+    if (!day) throw new Error('День маршрута не найден');
+    dispatch({ type: 'add-stop', dayId: day.id,
+      stop: { id: newId('stop'), time: '—', title: 'Новое место', kind: 'sight', duration: 'время уточнить' } });
+  });
 
   const openInvite = () => {
     setInviteOpen(true);
@@ -62,13 +54,13 @@ export default function TripScreen() {
   return (
     <SolarScreen>
       <AppCard padded={false}>
-        <PhotoPlaceholder emoji={DemoTrip.flag} height={170} />
+        <PhotoPlaceholder emoji={trip.flag} height={170} />
         <View style={styles.heroBody}>
           <SolarText variant="title" numberOfLines={2}>
-            {DemoTrip.title}
+            {trip.title}
           </SolarText>
           <SolarText secondary>
-            {DemoTrip.flag} {DemoTrip.countryName} · {formatDay(DemoTrip.startDate)} — {formatDay(DemoTrip.endDate)} 2027
+            {trip.flag} {trip.countryName} · {formatDay(trip.startDate)} — {formatDay(trip.endDate)} {trip.startDate.slice(0, 4)}
           </SolarText>
 
           <View style={styles.stats}>
@@ -77,7 +69,7 @@ export default function TripScreen() {
                 Общий бюджет
               </SolarText>
               <View style={styles.inline}>
-                <CurrencyAmount amount={DemoTrip.budgetRub} currency="RUB" />
+                <CurrencyAmount amount={budgetRub} currency="RUB" />
                 <DemoTag />
               </View>
             </View>
@@ -92,6 +84,8 @@ export default function TripScreen() {
           <AppButton title="Пригласить участника" onPress={openInvite} />
         </View>
       </AppCard>
+
+      {error && <SolarText variant="captionStrong" color="#B42318" accessibilityRole="alert">{error}</SolarText>}
 
       <ScrollView
         horizontal
@@ -121,8 +115,9 @@ export default function TripScreen() {
           inviteOpen={inviteOpen}
           onToggleInvite={setInviteOpen}
           onAdd={(p) => {
-            setParticipants((cur) => [...cur, p]);
-            setInviteOpen(false);
+            const added = act(() => dispatch({ type: 'add-participant', participant: p }));
+            if (added) setInviteOpen(false);
+            return added;
           }}
         />
       )}
@@ -155,7 +150,7 @@ function RouteTab({ days, onAddStop }: { days: TripDay[]; onAddStop: (date: stri
   return (
     <View style={styles.tabContent}>
       {days.map((day, i) => (
-        <AppCard key={day.date}>
+        <AppCard key={day.id}>
           <SectionHeader
             title={`День ${i + 1}`}
             subtitle={formatDay(day.date, true)}
@@ -222,7 +217,7 @@ function ParticipantsTab({
   participants: Participant[];
   inviteOpen: boolean;
   onToggleInvite: (open: boolean) => void;
-  onAdd: (p: Participant) => void;
+  onAdd: (p: Participant) => boolean;
 }) {
   const [name, setName] = useState('');
   const [role, setRole] = useState<Role>('member');
@@ -250,7 +245,7 @@ function ParticipantsTab({
             onChange={setRole}
           />
           <SolarText variant="caption" secondary>
-            Прототип: участник добавится только на этом экране, приглашение не отправляется.
+            Участник сохранится в поездке и будет доступен в расходах. Приглашение не отправляется.
           </SolarText>
           <View style={styles.inline}>
             <AppButton title="Отмена" variant="ghost" compact style={styles.flex} onPress={() => onToggleInvite(false)} />
@@ -260,9 +255,10 @@ function ParticipantsTab({
               style={styles.flex}
               disabled={!name.trim()}
               onPress={() => {
-                onAdd({ id: newId('p'), name: name.trim(), role });
-                setName('');
-                setRole('member');
+                if (onAdd({ id: newId('p'), name: name.trim(), role })) {
+                  setName('');
+                  setRole('member');
+                }
               }}
             />
           </View>
@@ -290,8 +286,7 @@ function ParticipantsTab({
 }
 
 function ExpensesTab() {
-  const totalGel = DemoExpenses.reduce((s, e) => s + e.amount, 0);
-  const totalRub = DemoExpenses.reduce((s, e) => s + e.amount * e.rateRub, 0);
+  const { totalGel, totalRub, budgetRub } = useSolarTrip();
   return (
     <View style={styles.tabContent}>
       <AppCard tone="navy">
@@ -305,9 +300,9 @@ function ExpensesTab() {
           size="large"
           color={Solar.white}
         />
-        <ProgressBar value={totalRub / DemoTrip.budgetRub} trackColor="rgba(216, 238, 244, 0.25)" />
+        <ProgressBar value={totalRub / budgetRub} trackColor="rgba(216, 238, 244, 0.25)" />
         <SolarText variant="caption" color={Solar.sky}>
-          из бюджета {formatMoney(DemoTrip.budgetRub, 'RUB')}
+          из бюджета {formatMoney(budgetRub, 'RUB')}
         </SolarText>
       </AppCard>
       <AppButton title="Открыть расходы" onPress={() => router.push('/demo/expenses')} />

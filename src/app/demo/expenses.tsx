@@ -1,4 +1,4 @@
-import { useReducer, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 
 import { AppButton } from '@/components/solar/app-button';
@@ -15,51 +15,40 @@ import { SolarScreen } from '@/components/solar/solar-screen';
 import { SolarText } from '@/components/solar/solar-text';
 import { TextField } from '@/components/solar/text-field';
 import { Solar, SolarRadius, SolarSpace } from '@/constants/solar';
-import {
-  DEMO_RATE_RUB_PER_GEL,
-  DemoExpenses,
-  DemoParticipants,
-  DemoTrip,
-  DemoTripDates,
-  ExpenseCategories,
-  formatDay,
-  type Expense,
-  type ExpenseCategory,
-} from '@/data/demo/georgia-trip';
+import { ExpenseCategories, type Expense, type ExpenseCategory } from '@/domain/financial';
+import type { TripParticipant } from '@/domain/solar-trip';
+import { useSolarTrip } from '@/store/solar-store';
+import { formatDay } from '@/utils/trip-dates';
 import type { SettlementRequest } from '@/domain/settlement';
 import {
   convertGelToRub, financialResult, formatMoney, moneyFromCents, moneyToCents, newId, parseRate,
   RATE_DECIMALS, sumMoney,
 } from '@/utils/money';
 import {
-  reduceFinancialLedger, registerSettlement, type FinancialLedgerState, type LedgerAction,
+  registerSettlement, type FinancialLedgerState,
 } from '@/utils/settlement-ledger';
 import {
-  computeBalances, computeExpenseTotals, computeSettlements, createExpenseFinancials, type SettlementSuggestion,
+  computeExpenseTotals, createExpenseFinancials, type SettlementSuggestion,
 } from '@/utils/split';
 
-const participants = DemoParticipants;
-const participantIds = participants.map((p) => p.id);
-const nameOf = (id: string) => participants.find((p) => p.id === id)?.name ?? id;
-const indexOf = (id: string) => participantIds.indexOf(id);
-
 type Rate = { kind: 'demo' | 'manual'; value: number; setAt?: string };
-const ledgerReducer = (state: FinancialLedgerState, action: LedgerAction) =>
-  reduceFinancialLedger(state, action, participantIds);
 
 export default function ExpensesScreen() {
-  const [ledger, dispatch] = useReducer(ledgerReducer, { expenses: DemoExpenses, settlements: [], error: null });
+  const { trip, ledger, participants, participantIds, days, rate, rateId, budgetRub,
+    totalGel, totalRub, remainingRub, balances, recommendations, dispatch } = useSolarTrip();
   const { expenses, settlements: payments } = ledger;
-  const [rate, setRate] = useState<Rate>({ kind: 'demo', value: DEMO_RATE_RUB_PER_GEL });
   const [formOpen, setFormOpen] = useState(false);
-
-  const { totalGel, totalRub } = computeExpenseTotals(expenses, participantIds, rate.value, payments);
-  const remainingRub = moneyFromCents(
-    moneyToCents(DemoTrip.budgetRub) - moneyToCents(totalRub, { allowZero: true }),
-  );
-
-  const balances = computeBalances(expenses, participantIds, payments);
-  const recommendations = computeSettlements(balances);
+  const [error, setError] = useState<string | null>(null);
+  const nameOf = (id: string) => participants.find((person) => person.id === id)?.name ?? id;
+  const indexOf = (id: string) => participantIds.indexOf(id);
+  const setRate = (next: Rate) => {
+    const result = financialResult(() => {
+      const now = new Date().toISOString();
+      dispatch({ type: 'set-rate', rate: { id: newId('rate'), currency: 'GEL', quoteCurrency: 'RUB',
+        rateRub: next.value, source: next.kind, effectiveDate: now.slice(0, 10), obtainedAt: now } });
+    });
+    setError(result.error);
+  };
 
   const sorted = [...expenses].sort((a, b) => b.date.localeCompare(a.date));
 
@@ -68,7 +57,7 @@ export default function ExpensesScreen() {
       <View style={styles.header}>
         <SolarText variant="title">Расходы компании</SolarText>
         <SolarText secondary>
-          {DemoTrip.flag} {DemoTrip.title} · {formatDay(DemoTrip.startDate)} — {formatDay(DemoTrip.endDate)}
+          {trip.flag} {trip.title} · {formatDay(trip.startDate)} — {formatDay(trip.endDate)}
         </SolarText>
       </View>
 
@@ -85,14 +74,14 @@ export default function ExpensesScreen() {
           size="large"
           color={Solar.white}
         />
-        <ProgressBar value={totalRub / DemoTrip.budgetRub} trackColor="rgba(216, 238, 244, 0.25)" />
+        <ProgressBar value={totalRub / budgetRub} trackColor="rgba(216, 238, 244, 0.25)" />
         <View style={styles.budgetRow}>
           <View style={styles.flex}>
             <SolarText variant="caption" color={Solar.sky}>
               Бюджет
             </SolarText>
             <SolarText variant="bodyStrong" color={Solar.white} numberOfLines={1} adjustsFontSizeToFit>
-              {formatMoney(DemoTrip.budgetRub, 'RUB')}
+              {formatMoney(budgetRub, 'RUB')}
             </SolarText>
           </View>
           <View style={[styles.flex, styles.alignEnd]}>
@@ -109,12 +98,13 @@ export default function ExpensesScreen() {
           </View>
         </View>
         <SolarText variant="caption" color={Solar.sky}>
-          Использовано {Math.round((totalRub / DemoTrip.budgetRub) * 100)}% бюджета
+          Использовано {Math.round((totalRub / budgetRub) * 100)}% бюджета
         </SolarText>
       </AppCard>
 
       <RateCard
         rate={rate}
+        demoRate={trip.exchangeRates.find((item) => item.source === 'demo')?.rateRub ?? null}
         onChange={setRate}
         validateRate={(value) => { computeExpenseTotals(expenses, participantIds, value, payments); }}
       />
@@ -122,11 +112,13 @@ export default function ExpensesScreen() {
       {formOpen ? (
         <ExpenseForm
           rate={rate.value}
+          participants={participants}
+          dates={days.map((day) => day.date)}
           onCancel={() => setFormOpen(false)}
           onSave={(e) => {
             const next = [...expenses, e];
             computeExpenseTotals(next, participantIds, rate.value, payments);
-            dispatch({ type: 'add-expense', expense: e, displayRate: rate.value });
+            dispatch({ type: 'add-expense', expense: e, rateId });
             setFormOpen(false);
           }}
         />
@@ -211,7 +203,8 @@ export default function ExpensesScreen() {
                 <PaymentControls
                   suggestion={s}
                   ledger={ledger}
-                  onRegister={(request) => dispatch({ type: 'register-settlement', request, displayRate: rate.value })}
+                  participantIds={participantIds}
+                  onRegister={(request) => dispatch({ type: 'register-settlement', request })}
                 />
               </View>
             );
@@ -219,9 +212,9 @@ export default function ExpensesScreen() {
         )}
       </AppCard>
 
-      {ledger.error && (
+      {error && (
         <SolarText variant="captionStrong" color="#B42318" accessibilityRole="alert">
-          {ledger.error}
+          {error}
         </SolarText>
       )}
 
@@ -252,10 +245,11 @@ export default function ExpensesScreen() {
                   variant="ghost"
                   compact
                   disabled={payment.status === 'cancelled'}
-                  onPress={() => dispatch({
-                    type: 'cancel-settlement', id: payment.id,
-                    cancelledAt: new Date().toISOString(), displayRate: rate.value,
-                  })}
+                  onPress={() => {
+                    const result = financialResult(() => dispatch({ type: 'cancel-settlement', id: payment.id,
+                      cancelledAt: new Date().toISOString() }));
+                    setError(result.error);
+                  }}
                 />
               </View>
             ))}
@@ -266,9 +260,10 @@ export default function ExpensesScreen() {
   );
 }
 
-function PaymentControls({ suggestion, ledger, onRegister }: {
+function PaymentControls({ suggestion, ledger, participantIds, onRegister }: {
   suggestion: SettlementSuggestion;
   ledger: FinancialLedgerState;
+  participantIds: string[];
   onRegister: (request: SettlementRequest) => void;
 }) {
   const [partialOpen, setPartialOpen] = useState(false);
@@ -317,8 +312,9 @@ function PaymentControls({ suggestion, ledger, onRegister }: {
   );
 }
 
-function RateCard({ rate, onChange, validateRate }: {
+function RateCard({ rate, demoRate, onChange, validateRate }: {
   rate: Rate;
+  demoRate: number | null;
   onChange: (r: Rate) => void;
   validateRate: (value: number) => void;
 }) {
@@ -330,7 +326,7 @@ function RateCard({ rate, onChange, validateRate }: {
     return value;
   });
   const valid = parsed.error === null;
-  const demoValid = financialResult(() => validateRate(DEMO_RATE_RUB_PER_GEL)).error === null;
+  const demoValid = demoRate !== null && financialResult(() => validateRate(demoRate)).error === null;
 
   return (
     <AppCard>
@@ -388,14 +384,14 @@ function RateCard({ rate, onChange, validateRate }: {
       ) : (
         <View style={styles.row}>
           <AppButton title="Указать свой курс" variant="secondary" compact style={styles.flex} onPress={() => setEditing(true)} />
-          {rate.kind === 'manual' && (
+          {rate.kind === 'manual' && demoRate !== null && (
             <AppButton
               title="Демо-курс"
               variant="ghost"
               compact
               style={styles.flex}
               disabled={!demoValid}
-              onPress={() => { if (demoValid) onChange({ kind: 'demo', value: DEMO_RATE_RUB_PER_GEL }); }}
+              onPress={() => { if (demoValid && demoRate !== null) onChange({ kind: 'demo', value: demoRate }); }}
             />
           )}
         </View>
@@ -408,13 +404,19 @@ const categories = Object.keys(ExpenseCategories) as ExpenseCategory[];
 
 function ExpenseForm({
   rate,
+  participants,
+  dates,
   onSave,
   onCancel,
 }: {
   rate: number;
+  participants: TripParticipant[];
+  dates: string[];
   onSave: (e: Expense) => void;
   onCancel: () => void;
 }) {
+  const participantIds = participants.map((person) => person.id);
+  const nameOf = (id: string) => participants.find((person) => person.id === id)?.name ?? id;
   const [title, setTitle] = useState('');
   const [category, setCategory] = useState<ExpenseCategory>('food');
   const [amountInput, setAmountInput] = useState('');
@@ -422,7 +424,7 @@ function ExpenseForm({
   const [split, setSplit] = useState<string[]>(participantIds);
   const [mode, setMode] = useState<'equal' | 'manual'>('equal');
   const [manual, setManual] = useState<Record<string, string>>({});
-  const [date, setDate] = useState(DemoTripDates[0]);
+  const [date, setDate] = useState(dates[0]);
   const [error, setError] = useState<string | null>(null);
 
   const amount = financialResult(() => moneyFromCents(moneyToCents(amountInput)));
@@ -534,7 +536,7 @@ function ExpenseForm({
 
       <FormLabel text="Дата" />
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsRow}>
-        {DemoTripDates.map((d) => (
+        {dates.map((d) => (
           <FilterChip key={d} label={formatDay(d)} selected={d === date} onPress={() => setDate(d)} />
         ))}
       </ScrollView>

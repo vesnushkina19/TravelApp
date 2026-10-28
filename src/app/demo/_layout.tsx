@@ -8,6 +8,8 @@ import {
 import { Stack } from 'expo-router';
 import { ActivityIndicator, View } from 'react-native';
 
+import { SolarTripProvider } from '@/store/solar-store';
+
 import { Solar, SolarFont } from '@/constants/solar';
 
 /** Прототипы в дизайн-системе Solar. Отдельный стек, не влияет на основную навигацию. */
@@ -28,19 +30,21 @@ export default function DemoLayout() {
   }
 
   return (
-    <Stack
-      screenOptions={{
-        headerStyle: { backgroundColor: Solar.ice },
-        headerShadowVisible: false,
-        headerTintColor: Solar.navy,
-        headerTitleStyle: { fontFamily: SolarFont.semibold, color: Solar.navy },
-        headerBackTitle: 'Назад',
-        contentStyle: { backgroundColor: Solar.ice },
-      }}>
-      <Stack.Screen name="index" options={{ title: 'Прототипы Solar' }} />
-      <Stack.Screen name="discover" options={{ title: '' }} />
-      <Stack.Screen name="trip" options={{ title: '' }} />
-      <Stack.Screen name="expenses" options={{ title: '' }} />
-    </Stack>
+    <SolarTripProvider>
+      <Stack
+        screenOptions={{
+          headerStyle: { backgroundColor: Solar.ice },
+          headerShadowVisible: false,
+          headerTintColor: Solar.navy,
+          headerTitleStyle: { fontFamily: SolarFont.semibold, color: Solar.navy },
+          headerBackTitle: 'Назад',
+          contentStyle: { backgroundColor: Solar.ice },
+        }}>
+        <Stack.Screen name="index" options={{ title: 'Прототипы Solar' }} />
+        <Stack.Screen name="discover" options={{ title: '' }} />
+        <Stack.Screen name="trip" options={{ title: '' }} />
+        <Stack.Screen name="expenses" options={{ title: '' }} />
+      </Stack>
+    </SolarTripProvider>
   );
 }

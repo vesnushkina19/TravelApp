@@ -1,4 +1,4 @@
-import type { Expense } from '@/data/demo/georgia-trip';
+import type { Expense } from '@/domain/financial';
 import {
   createSettlement, sameSettlementIntent, validateOperationTime, validateSettlementJournal,
   type Settlement, type SettlementRequest,

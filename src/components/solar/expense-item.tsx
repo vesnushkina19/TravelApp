@@ -1,7 +1,8 @@
 import { StyleSheet, Text, View } from 'react-native';
 
 import { Solar, SolarSpace } from '@/constants/solar';
-import { ExpenseCategories, formatDay, type Expense } from '@/data/demo/georgia-trip';
+import { ExpenseCategories, type Expense } from '@/domain/financial';
+import { formatDay } from '@/utils/trip-dates';
 import { convertGelToRub } from '@/utils/money';
 
 import { CurrencyAmount } from './currency-amount';
