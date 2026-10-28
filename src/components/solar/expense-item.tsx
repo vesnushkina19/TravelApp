@@ -2,6 +2,7 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import { Solar, SolarSpace } from '@/constants/solar';
 import { ExpenseCategories, formatDay, type Expense } from '@/data/demo/georgia-trip';
+import { convertGelToRub } from '@/utils/money';
 
 import { CurrencyAmount } from './currency-amount';
 import { SolarText } from './solar-text';
@@ -35,7 +36,7 @@ export function ExpenseItem({ expense, payerName }: Props) {
         <CurrencyAmount
           amount={expense.amount}
           currency={expense.currency}
-          converted={{ amount: expense.amount * expense.rateRub, currency: 'RUB' }}
+          converted={{ amount: convertGelToRub(expense.amount, expense.rateRub), currency: 'RUB' }}
           align="right"
         />
       </View>

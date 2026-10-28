@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useReducer, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 
 import { AppButton } from '@/components/solar/app-button';
@@ -26,8 +26,17 @@ import {
   type Expense,
   type ExpenseCategory,
 } from '@/data/demo/georgia-trip';
-import { formatMoney, newId, parseAmount, round2 } from '@/utils/money';
-import { computeBalances, computeSettlements } from '@/utils/split';
+import type { SettlementRequest } from '@/domain/settlement';
+import {
+  convertGelToRub, financialResult, formatMoney, moneyFromCents, moneyToCents, newId, parseRate,
+  RATE_DECIMALS, sumMoney,
+} from '@/utils/money';
+import {
+  reduceFinancialLedger, registerSettlement, type FinancialLedgerState, type LedgerAction,
+} from '@/utils/settlement-ledger';
+import {
+  computeBalances, computeExpenseTotals, computeSettlements, createExpenseFinancials, type SettlementSuggestion,
+} from '@/utils/split';
 
 const participants = DemoParticipants;
 const participantIds = participants.map((p) => p.id);
@@ -35,19 +44,22 @@ const nameOf = (id: string) => participants.find((p) => p.id === id)?.name ?? id
 const indexOf = (id: string) => participantIds.indexOf(id);
 
 type Rate = { kind: 'demo' | 'manual'; value: number; setAt?: string };
+const ledgerReducer = (state: FinancialLedgerState, action: LedgerAction) =>
+  reduceFinancialLedger(state, action, participantIds);
 
 export default function ExpensesScreen() {
-  const [expenses, setExpenses] = useState<Expense[]>(DemoExpenses);
+  const [ledger, dispatch] = useReducer(ledgerReducer, { expenses: DemoExpenses, settlements: [], error: null });
+  const { expenses, settlements: payments } = ledger;
   const [rate, setRate] = useState<Rate>({ kind: 'demo', value: DEMO_RATE_RUB_PER_GEL });
   const [formOpen, setFormOpen] = useState(false);
-  const [settled, setSettled] = useState<string[]>([]);
 
-  const totalGel = expenses.reduce((s, e) => s + e.amount, 0);
-  const totalRub = expenses.reduce((s, e) => s + e.amount * e.rateRub, 0);
-  const remainingRub = DemoTrip.budgetRub - totalRub;
+  const { totalGel, totalRub } = computeExpenseTotals(expenses, participantIds, rate.value, payments);
+  const remainingRub = moneyFromCents(
+    moneyToCents(DemoTrip.budgetRub) - moneyToCents(totalRub, { allowZero: true }),
+  );
 
-  const balances = computeBalances(expenses, participantIds);
-  const settlements = computeSettlements(balances);
+  const balances = computeBalances(expenses, participantIds, payments);
+  const recommendations = computeSettlements(balances);
 
   const sorted = [...expenses].sort((a, b) => b.date.localeCompare(a.date));
 
@@ -101,14 +113,20 @@ export default function ExpensesScreen() {
         </SolarText>
       </AppCard>
 
-      <RateCard rate={rate} onChange={setRate} />
+      <RateCard
+        rate={rate}
+        onChange={setRate}
+        validateRate={(value) => { computeExpenseTotals(expenses, participantIds, value, payments); }}
+      />
 
       {formOpen ? (
         <ExpenseForm
           rate={rate.value}
           onCancel={() => setFormOpen(false)}
           onSave={(e) => {
-            setExpenses((cur) => [...cur, e]);
+            const next = [...expenses, e];
+            computeExpenseTotals(next, participantIds, rate.value, payments);
+            dispatch({ type: 'add-expense', expense: e, displayRate: rate.value });
             setFormOpen(false);
           }}
         />
@@ -131,11 +149,11 @@ export default function ExpensesScreen() {
         )}
       </AppCard>
 
-      <SectionHeader title="Баланс участников" subtitle="Сколько оплатил каждый минус его доля" />
+      <SectionHeader title="Баланс участников" subtitle="С учётом расходов и зарегистрированных переводов" />
       <AppCard>
         {participants.map((p, i) => {
           const balance = balances[p.id] ?? 0;
-          const paid = expenses.filter((e) => e.paidBy === p.id).reduce((s, e) => s + e.amount, 0);
+          const paid = sumMoney(expenses.filter((e) => e.paidBy === p.id).map((e) => e.amount));
           return (
             <View key={p.id} style={[styles.row, i > 0 && styles.divider]}>
               <ParticipantAvatar name={p.name} index={i} size={40} />
@@ -163,16 +181,14 @@ export default function ExpensesScreen() {
 
       <SectionHeader title="Кто кому должен" subtitle="Минимум переводов, чтобы все были в расчёте" />
       <AppCard>
-        {settlements.length === 0 ? (
+        {recommendations.length === 0 ? (
           <SolarText variant="caption" secondary style={styles.center}>
             Все в расчёте 🎉
           </SolarText>
         ) : (
-          settlements.map((s, i) => {
-            const key = `${s.from}>${s.to}:${s.amount}`;
-            const done = settled.includes(key);
+          recommendations.map((s, i) => {
             return (
-              <View key={key} style={[styles.debt, i > 0 && styles.divider]}>
+              <View key={JSON.stringify([s.from, s.to])} style={[styles.debt, i > 0 && styles.divider]}>
                 <View style={styles.row}>
                   <ParticipantAvatar name={nameOf(s.from)} index={indexOf(s.from)} size={32} />
                   <SolarText variant="heading" secondary>
@@ -180,48 +196,141 @@ export default function ExpensesScreen() {
                   </SolarText>
                   <ParticipantAvatar name={nameOf(s.to)} index={indexOf(s.to)} size={32} />
                   <View style={styles.flex}>
-                    <SolarText
-                      variant="bodyStrong"
-                      numberOfLines={1}
-                      style={done && styles.strike}>
+                    <SolarText variant="bodyStrong" numberOfLines={1}>
                       {nameOf(s.from)} → {nameOf(s.to)}
                     </SolarText>
-                    {done && (
-                      <SolarText variant="captionStrong" color={Solar.navySecondary}>
-                        ✓ Погашено
-                      </SolarText>
-                    )}
                   </View>
                   <CurrencyAmount
                     amount={s.amount}
                     currency="GEL"
-                    converted={{ amount: s.amount * rate.value, currency: 'RUB' }}
+                    converted={{ amount: convertGelToRub(s.amount, rate.value), currency: 'RUB' }}
                     size="small"
                     align="right"
                   />
                 </View>
-                <AppButton
-                  title={done ? 'Отменить отметку' : 'Отметить погашенным'}
-                  variant={done ? 'ghost' : 'secondary'}
-                  compact
-                  onPress={() =>
-                    setSettled((cur) => (done ? cur.filter((k) => k !== key) : [...cur, key]))
-                  }
+                <PaymentControls
+                  suggestion={s}
+                  ledger={ledger}
+                  onRegister={(request) => dispatch({ type: 'register-settlement', request, displayRate: rate.value })}
                 />
               </View>
             );
           })
         )}
       </AppCard>
+
+      {ledger.error && (
+        <SolarText variant="captionStrong" color="#B42318" accessibilityRole="alert">
+          {ledger.error}
+        </SolarText>
+      )}
+
+      {payments.length > 0 && (
+        <>
+          <SectionHeader title="История переводов" subtitle={`${payments.length} операций`} />
+          <AppCard>
+            {[...payments].reverse().map((payment, i) => (
+              <View key={payment.id} style={[styles.debt, i > 0 && styles.divider]}>
+                <View style={styles.row}>
+                  <View style={styles.flex}>
+                    <SolarText variant="bodyStrong" style={payment.status === 'cancelled' && styles.strike}>
+                      {nameOf(payment.fromId)} → {nameOf(payment.toId)}
+                    </SolarText>
+                    <SolarText variant="caption" secondary>
+                      {new Date(payment.occurredAt).toLocaleString('ru-RU')}
+                    </SolarText>
+                    <SolarText variant="captionStrong" color={Solar.navySecondary}>
+                      {payment.status === 'completed'
+                        ? '✓ Перевод учтён'
+                        : `Отменён ${new Date(payment.cancelledAt).toLocaleString('ru-RU')}`}
+                    </SolarText>
+                  </View>
+                  <CurrencyAmount amount={moneyFromCents(payment.amountMinor)} currency="GEL" size="small" align="right" />
+                </View>
+                <AppButton
+                  title={payment.status === 'completed' ? 'Отменить перевод' : 'Перевод отменён'}
+                  variant="ghost"
+                  compact
+                  disabled={payment.status === 'cancelled'}
+                  onPress={() => dispatch({
+                    type: 'cancel-settlement', id: payment.id,
+                    cancelledAt: new Date().toISOString(), displayRate: rate.value,
+                  })}
+                />
+              </View>
+            ))}
+          </AppCard>
+        </>
+      )}
     </SolarScreen>
   );
 }
 
-function RateCard({ rate, onChange }: { rate: Rate; onChange: (r: Rate) => void }) {
+function PaymentControls({ suggestion, ledger, onRegister }: {
+  suggestion: SettlementSuggestion;
+  ledger: FinancialLedgerState;
+  onRegister: (request: SettlementRequest) => void;
+}) {
+  const [partialOpen, setPartialOpen] = useState(false);
+  const [input, setInput] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const pending = useRef<{ ledger: FinancialLedgerState; request: SettlementRequest } | null>(null);
+
+  const submit = (amount: string | number) => {
+    const result = financialResult(() => {
+      const amountMinor = moneyToCents(amount, { label: 'Сумма перевода' });
+      // Repeated clicks before React commits reuse the same intent, not a new operation.
+      const previous = pending.current;
+      const request: SettlementRequest = previous?.ledger === ledger
+        && previous.request.fromId === suggestion.from && previous.request.toId === suggestion.to
+        && previous.request.amountMinor === amountMinor ? previous.request : {
+          id: newId('settlement'), requestId: newId('settlement-request'),
+          fromId: suggestion.from, toId: suggestion.to, amountMinor,
+          currency: 'GEL', occurredAt: new Date().toISOString(),
+        };
+      registerSettlement(ledger, request, participantIds);
+      pending.current = { ledger, request };
+      onRegister(request);
+    });
+    setError(result.error);
+    if (result.error === null) {
+      setPartialOpen(false);
+      setInput('');
+    }
+  };
+
+  return (
+    <>
+      <AppButton title="Отметить погашенным" variant="secondary" compact onPress={() => submit(suggestion.amount)} />
+      <AppButton title="Погасить часть" variant="ghost" compact onPress={() => { setPartialOpen(true); setError(null); }} />
+      {partialOpen && (
+        <AppCard tone="sky">
+          <TextField label="Сумма погашения" value={input} onChangeText={setInput} keyboardType="decimal-pad" suffix="GEL" placeholder="0,00" />
+          <View style={styles.row}>
+            <AppButton title="Отмена" variant="ghost" compact style={styles.flex} onPress={() => { setPartialOpen(false); setError(null); }} />
+            <AppButton title="Записать перевод" compact style={styles.flex} onPress={() => submit(input)} />
+          </View>
+        </AppCard>
+      )}
+      {error && <SolarText variant="captionStrong" color="#B42318" accessibilityRole="alert">{error}</SolarText>}
+    </>
+  );
+}
+
+function RateCard({ rate, onChange, validateRate }: {
+  rate: Rate;
+  onChange: (r: Rate) => void;
+  validateRate: (value: number) => void;
+}) {
   const [editing, setEditing] = useState(false);
   const [input, setInput] = useState('');
-  const parsed = parseAmount(input);
-  const valid = Number.isFinite(parsed) && parsed > 0;
+  const parsed = financialResult(() => {
+    const value = parseRate(input);
+    validateRate(value);
+    return value;
+  });
+  const valid = parsed.error === null;
+  const demoValid = financialResult(() => validateRate(DEMO_RATE_RUB_PER_GEL)).error === null;
 
   return (
     <AppCard>
@@ -231,7 +340,7 @@ function RateCard({ rate, onChange }: { rate: Rate; onChange: (r: Rate) => void 
             Курс пересчёта
           </SolarText>
           <SolarText variant="heading">
-            1 GEL = {rate.value.toLocaleString('ru-RU', { minimumFractionDigits: 2 })} ₽
+            1 GEL = {rate.value.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: RATE_DECIMALS })} ₽
           </SolarText>
         </View>
         <View style={[styles.ratePill, rate.kind === 'demo' ? styles.ratePillDemo : styles.ratePillManual]}>
@@ -244,7 +353,9 @@ function RateCard({ rate, onChange }: { rate: Rate; onChange: (r: Rate) => void 
           : `Источник: введён вручную · ${rate.setAt}`}
       </SolarText>
       <SolarText variant="caption" secondary>
-        Каждый расход хранит свой курс на дату операции. Новый курс применяется к новым расходам.
+        {editing && input.trim() && parsed.error
+          ? parsed.error
+          : 'Каждый расход хранит свой курс на дату операции. Новый курс применяется к новым расходам.'}
       </SolarText>
 
       {editing ? (
@@ -266,7 +377,8 @@ function RateCard({ rate, onChange }: { rate: Rate; onChange: (r: Rate) => void 
               style={styles.flex}
               disabled={!valid}
               onPress={() => {
-                onChange({ kind: 'manual', value: round2(parsed), setAt: formatDay(new Date().toISOString().slice(0, 10)) });
+                if (parsed.value === null) return;
+                onChange({ kind: 'manual', value: parsed.value, setAt: formatDay(new Date().toISOString().slice(0, 10)) });
                 setEditing(false);
                 setInput('');
               }}
@@ -282,7 +394,8 @@ function RateCard({ rate, onChange }: { rate: Rate; onChange: (r: Rate) => void 
               variant="ghost"
               compact
               style={styles.flex}
-              onPress={() => onChange({ kind: 'demo', value: DEMO_RATE_RUB_PER_GEL })}
+              disabled={!demoValid}
+              onPress={() => { if (demoValid) onChange({ kind: 'demo', value: DEMO_RATE_RUB_PER_GEL }); }}
             />
           )}
         </View>
@@ -305,42 +418,38 @@ function ExpenseForm({
   const [title, setTitle] = useState('');
   const [category, setCategory] = useState<ExpenseCategory>('food');
   const [amountInput, setAmountInput] = useState('');
-  const [paidBy, setPaidBy] = useState(participants[0].id);
+  const [paidBy, setPaidBy] = useState(participants[0]?.id ?? '');
   const [split, setSplit] = useState<string[]>(participantIds);
   const [mode, setMode] = useState<'equal' | 'manual'>('equal');
   const [manual, setManual] = useState<Record<string, string>>({});
   const [date, setDate] = useState(DemoTripDates[0]);
   const [error, setError] = useState<string | null>(null);
 
-  const amount = parseAmount(amountInput);
-  const amountValid = Number.isFinite(amount) && amount > 0;
-  const manualSum = split.reduce((s, id) => s + (parseAmount(manual[id] ?? '') || 0), 0);
+  const amount = financialResult(() => moneyFromCents(moneyToCents(amountInput)));
+  const amountValid = amount.value !== null;
+  const converted = financialResult(() => convertGelToRub(amount.value ?? 0, rate));
+  const manualSum = financialResult(() => sumMoney(split.map((id) => moneyFromCents(
+    moneyToCents(manual[id] ?? '', { allowZero: true, label: `Доля участника ${nameOf(id)}` }),
+  ))));
 
   const toggleSplit = (id: string) =>
     setSplit((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
 
   const save = () => {
     if (!title.trim()) return setError('Введите название');
-    if (!amountValid) return setError('Введите сумму больше нуля');
-    if (split.length === 0) return setError('Выберите, между кем разделить');
-    if (mode === 'manual' && Math.abs(manualSum - amount) > 0.01)
-      return setError(`Доли должны в сумме давать ${formatMoney(amount, 'GEL')}`);
-
-    onSave({
-      id: newId('e'),
-      title: title.trim(),
-      category,
-      amount: round2(amount),
-      currency: 'GEL',
-      rateRub: rate,
-      paidBy,
-      splitBetween: split,
-      manualShares:
-        mode === 'manual'
-          ? Object.fromEntries(split.map((id) => [id, parseAmount(manual[id] ?? '') || 0]))
-          : undefined,
-      date,
+    const result = financialResult(() => {
+      const financials = createExpenseFinancials({
+        amount: amountInput,
+        currency: 'GEL',
+        rateRub: rate,
+        paidBy,
+        splitBetween: split,
+        manualShares: mode === 'manual'
+          ? Object.fromEntries(split.map((id) => [id, manual[id] ?? ''])) : undefined,
+      }, participantIds);
+      onSave({ id: newId('e'), title: title.trim(), category, ...financials, date });
     });
+    if (result.error !== null) setError(result.error);
   };
 
   return (
@@ -370,8 +479,8 @@ function ExpenseForm({
         suffix="GEL"
       />
       <SolarText variant="caption" secondary>
-        {amountValid
-          ? `≈ ${formatMoney(amount * rate, 'RUB')} по курсу ${rate.toLocaleString('ru-RU')} ₽`
+        {amountValid && converted.value !== null
+          ? `≈ ${formatMoney(converted.value, 'RUB')} по курсу ${rate.toLocaleString('ru-RU', { maximumFractionDigits: RATE_DECIMALS })} ₽`
           : 'Эквивалент в рублях посчитается автоматически'}
       </SolarText>
 
@@ -399,8 +508,8 @@ function ExpenseForm({
       />
       {mode === 'equal' ? (
         <SolarText variant="caption" secondary>
-          {amountValid && split.length > 0
-            ? `По ${formatMoney(amount / split.length, 'GEL')} на человека`
+          {amount.value !== null && split.length > 0
+            ? `По ${formatMoney(amount.value / split.length, 'GEL')} на человека`
             : 'Сумма разделится поровну между выбранными'}
         </SolarText>
       ) : (
@@ -417,8 +526,8 @@ function ExpenseForm({
             />
           ))}
           <SolarText variant="caption" secondary>
-            Распределено {formatMoney(manualSum, 'GEL')}
-            {amountValid ? ` из ${formatMoney(amount, 'GEL')}` : ''}
+            Распределено {manualSum.value === null ? '—' : formatMoney(manualSum.value, 'GEL')}
+            {amount.value !== null ? ` из ${formatMoney(amount.value, 'GEL')}` : ''}
           </SolarText>
         </View>
       )}
