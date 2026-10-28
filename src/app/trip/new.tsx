@@ -35,7 +35,9 @@ export default function NewTripScreen() {
       return setError('Даты в формате ГГГГ-ММ-ДД, например 2026-12-01');
     if (endDate < startDate) return setError('Дата окончания раньше даты начала');
 
-    addTrip({ countryCode, startDate, endDate, note: note.trim() || undefined });
+    if (!addTrip({ countryCode, startDate, endDate, note: note.trim() || undefined })) {
+      return setError('Не удалось добавить поездку. Проверьте данные и дождитесь готовности хранилища.');
+    }
     router.back();
   };
 
